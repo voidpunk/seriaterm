@@ -3,6 +3,7 @@ import threading
 import serial
 import webbrowser
 import sys
+import time
 from serial.tools import list_ports
 
 
@@ -23,6 +24,7 @@ class App(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
         # default com init values
+        self.connection = False
         self.baudrate = 9600
         self.bytesize = 8
         self.parity   = "N"
@@ -183,25 +185,35 @@ class App(ctk.CTk):
 
 
     def write_callback(self):
-        self.serial_write()
+        if self.connection:
+            self.serial_write()
+        else:
+            self.log("Cannot write:\nnot connected!")
 
 
     def clear_callback(self):
-        self.input.set("")
+        self.textbox.delete("0.0", ctk.END)
 
 
     def event_connect(self):
         if self.sideleft_button_connect._text == "Connect":
-            self.connection = serial.Serial(
-                port=self.comport,
-                baudrate=self.baudrate,
-                bytesize=self.bytesize,
-                parity=self.parity,
-                stopbits=self.stopbits
-            )
-            self.sideleft_button_connect.configure(text="Disconnect")
+            try:
+                self.connection = serial.Serial(
+                    port=self.comport,
+                    baudrate=self.baudrate,
+                    bytesize=self.bytesize,
+                    parity=self.parity,
+                    stopbits=self.stopbits
+                )
+                self.log("Connected!")
+                self.sideleft_button_connect.configure(text="Disconnect")
+            except serial.SerialException:
+                self.log("Access denied, COM already occupied!")
         elif self.sideleft_button_connect._text == "Disconnect":
             self.connection.close()
+            self.connection = False
+            self.stop_reading()
+            self.log("Disconnected!")
             self.sideleft_button_connect.configure(text="Connect")
 
 
@@ -213,7 +225,9 @@ class App(ctk.CTk):
             if self.stop_reading_thread:
                 break
             buffer = self.connection.read(self.connection.in_waiting).decode()
+            self.textbox.configure(state=ctk.NORMAL)
             self.textbox.insert("0.0", buffer)
+            self.textbox.configure(state=ctk.DISABLED)
 
 
     def serial_write(self):
@@ -233,24 +247,47 @@ class App(ctk.CTk):
         elif ctk.get_appearance_mode() == "Light":
             self.read_bar.configure(progress_color="#939BA2") # gray on light theme
 
+    def start_reading(self):
+        if self.connection:
+            self.start_bar()
+            self.main_button_read.configure(text="Stop")
+            self.stop_reading_thread = False
+            self.reading_thread = threading.Thread(target=self.serial_read)
+            self.reading_thread.start()
+        else:
+            self.log("Cannot read:\nnot connected!")
+
+
+    def stop_reading(self):
+        self.stop_bar()
+        self.main_button_read.configure(text="Read")
+        self.stop_reading_thread = True
+
 
     def event_read(self):
         if self.main_button_read._text == "Read":
-            if self.connection:
-                self.start_bar()
-                self.main_button_read.configure(text="Stop")
-                self.stop_reading_thread = False
-                self.reading_thread = threading.Thread(target=self.serial_read)
-                self.reading_thread.start()
+            self.start_reading()
         elif self.main_button_read._text == "Stop":
-            self.stop_bar()
-            self.main_button_read.configure(text="Read")
-            self.stop_reading_thread = True
+            self.stop_reading()
 
 
     def event_scan(self):
         self.ports = {x.device: x.description for x in sorted(list_ports.comports())}
         self.optionmenu_comport.configure(values=[f"{e[0]} - {e[1]}" for e in self.ports.items()])
+
+
+    def clear_log(self):
+        self.logbox.configure(state=ctk.NORMAL)
+        self.logbox.delete("0.0", ctk.END)
+        self.logbox.configure(state=ctk.DISABLED)
+
+
+    def log(self, text):
+        self.logbox.configure(state=ctk.NORMAL)
+        self.logbox.insert("0.0", text+"\n\n")
+        self.logbox.configure(state=ctk.DISABLED)
+        self.logtimer = threading.Timer(3, self.clear_log)
+        self.logtimer.start()
 
 
     def contribute_callback(self):
@@ -261,6 +298,7 @@ class App(ctk.CTk):
 def on_closing():
     global stop_threads
     stop_threads = True
+    time.sleep(0.5)
     sys.exit()
 
 
